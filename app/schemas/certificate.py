@@ -37,3 +37,9 @@ class CertificateVerifyOut(BaseModel):
     workshop_title: str | None = None
     issued_at: datetime | None = None
     revoked: bool = False
+
+
+class CertificateDetailOut(CertificateOut):
+    holder_name: str = ""
+    holder_email: str = ""
+    workshop_title: str = ""
