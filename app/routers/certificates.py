@@ -13,6 +13,7 @@ from app.models.registration import Registration
 from app.models.user import User
 from app.models.workshop import Workshop
 from app.schemas.certificate import (
+    CertificateDetailOut,
     CertificateIssueIn,
     CertificateManualIssueIn,
     CertificateOut,
@@ -166,3 +167,23 @@ async def my_certificates(db: AsyncSession = Depends(get_db), user: User = Depen
         )
     ).scalars().all()
     return rows
+
+
+@router.get("", response_model=list[CertificateDetailOut])
+async def all_certificates(db: AsyncSession = Depends(get_db), user: User = Depends(require_staff)):
+    rows = (
+        await db.execute(
+            select(Certificate, User, Workshop)
+            .join(User, Certificate.user_id == User.id)
+            .join(Workshop, Certificate.workshop_id == Workshop.id)
+            .order_by(Certificate.issued_at.desc())
+        )
+    ).all()
+    out: list[CertificateDetailOut] = []
+    for cert, u, w in rows:
+        d = CertificateDetailOut.model_validate(cert)
+        d.holder_name = u.name
+        d.holder_email = u.email
+        d.workshop_title = w.title
+        out.append(d)
+    return out
