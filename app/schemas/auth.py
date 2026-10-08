@@ -19,6 +19,15 @@ class TokenOut(BaseModel):
     token_type: str = "bearer"
 
 
+class NameUpdateIn(BaseModel):
+    name: str = Field(min_length=2, max_length=60)
+
+
+class PasswordChangeIn(BaseModel):
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=6, max_length=128)
+
+
 class UserOut(BaseModel):
     id: int
     email: str
