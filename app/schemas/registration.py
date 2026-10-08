@@ -15,6 +15,10 @@ class RegistrationOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class RegistrationStatusIn(BaseModel):
+    status: str  # registered | attended | cancelled
+
+
 class RegistrationDetailOut(RegistrationOut):
     user_name: str = ""
     user_email: str = ""
