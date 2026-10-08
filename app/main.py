@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import models  # noqa: F401 — register models for Base.metadata
 from app.config import settings
-from app.routers import auth, certificates, registrations, workshops
+from app.routers import auth, certificates, registrations, stats, users, workshops
 
 
 @asynccontextmanager
@@ -43,3 +43,5 @@ app.include_router(auth.router)
 app.include_router(workshops.router)
 app.include_router(registrations.router)
 app.include_router(certificates.router)
+app.include_router(stats.router)
+app.include_router(users.router)
