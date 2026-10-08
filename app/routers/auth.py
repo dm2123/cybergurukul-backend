@@ -13,7 +13,7 @@ from app.auth.security import (
 )
 from app.database import get_db
 from app.models.user import User
-from app.schemas.auth import LoginIn, SignupIn, TokenOut, UserOut
+from app.schemas.auth import LoginIn, NameUpdateIn, PasswordChangeIn, SignupIn, TokenOut, UserOut
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -60,3 +60,22 @@ async def refresh(refresh_token: str, db: AsyncSession = Depends(get_db)):
 @router.get("/me", response_model=UserOut)
 async def me(user: User = Depends(get_current_user)):
     return user
+
+
+@router.put("/me", response_model=UserOut)
+async def update_me(data: NameUpdateIn, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    user.name = data.name.strip()
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.post("/change-password")
+async def change_password(
+    data: PasswordChangeIn, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
+):
+    if not verify_password(data.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    user.password_hash = hash_password(data.new_password)
+    await db.commit()
+    return {"ok": True}
