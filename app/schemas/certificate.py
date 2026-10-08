@@ -9,6 +9,13 @@ class CertificateIssueIn(BaseModel):
     template: str = Field(default="navy_gold", max_length=32)
 
 
+class CertificateManualIssueIn(BaseModel):
+    workshop_id: int
+    name: str = Field(min_length=2, max_length=255)
+    email: str | None = Field(default=None, max_length=255)
+    template: str = Field(default="navy_gold", max_length=32)
+
+
 class CertificateOut(BaseModel):
     id: int
     cert_id: str
