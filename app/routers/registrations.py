@@ -11,7 +11,11 @@ from app.database import get_db
 from app.models.registration import Registration
 from app.models.user import User
 from app.models.workshop import Workshop
-from app.schemas.registration import RegistrationDetailOut, RegistrationOut
+from app.schemas.registration import (
+    RegistrationDetailOut,
+    RegistrationOut,
+    RegistrationStatusIn,
+)
 
 router = APIRouter(prefix="/api/v1/registrations", tags=["registrations"])
 
@@ -74,3 +78,29 @@ async def all_registrations(db: AsyncSession = Depends(get_db), user: User = Dep
         d.workshop_title = w.title
         out.append(d)
     return out
+
+
+@router.patch("/{reg_id}", response_model=RegistrationOut)
+async def update_registration_status(
+    reg_id: int, data: RegistrationStatusIn, db: AsyncSession = Depends(get_db), user: User = Depends(require_staff)
+):
+    if data.status not in ("registered", "attended", "cancelled"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    reg = (await db.execute(select(Registration).where(Registration.id == reg_id))).scalar_one_or_none()
+    if reg is None:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    reg.status = data.status
+    await db.commit()
+    await db.refresh(reg)
+    return reg
+
+
+@router.delete("/{reg_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_registration(
+    reg_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(require_staff)
+):
+    reg = (await db.execute(select(Registration).where(Registration.id == reg_id))).scalar_one_or_none()
+    if reg is None:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    await db.delete(reg)
+    await db.commit()
