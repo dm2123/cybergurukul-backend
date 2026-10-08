@@ -1,15 +1,21 @@
 """Auth request/response schemas."""
-from pydantic import BaseModel, EmailStr, Field
+from typing import Annotated
+
+from pydantic import BaseModel, Field, StringConstraints
+
+# Simple email validation: just requires @ and a dot in domain part.
+# (Pydantic's EmailStr rejects .local domains like admin@certify.local)
+EmailStrLocal = Annotated[str, StringConstraints(min_length=5, max_length=255, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$|^[^@\s]+@[^@\s]+$")]
 
 
 class SignupIn(BaseModel):
-    email: EmailStr
+    email: EmailStrLocal
     name: str = Field(min_length=2, max_length=255)
     password: str = Field(min_length=8, max_length=128)
 
 
 class LoginIn(BaseModel):
-    email: EmailStr
+    email: EmailStrLocal
     password: str
 
 
