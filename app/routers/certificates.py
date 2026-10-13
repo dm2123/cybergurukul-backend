@@ -3,15 +3,10 @@ import secrets
 import string
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import catalyst_db
 from app.auth.deps import get_current_user, require_staff
-from app.database import get_db
-from app.models.certificate import Certificate
-from app.models.registration import Registration
-from app.models.user import User
-from app.models.workshop import Workshop
+from app.catalyst_db import User
 from app.schemas.certificate import (
     CertificateDetailOut,
     CertificateIssueIn,
@@ -30,20 +25,16 @@ def _gen_cert_id() -> str:
 
 @router.post("/issue", response_model=CertificateOut, status_code=status.HTTP_201_CREATED)
 async def issue_certificate(
-    data: CertificateIssueIn, db: AsyncSession = Depends(get_db), user: User = Depends(require_staff)
+    data: CertificateIssueIn, user: User = Depends(require_staff)
 ):
-    reg = (
-        await db.execute(select(Registration).where(Registration.id == data.registration_id))
-    ).scalar_one_or_none()
+    reg = await catalyst_db.get_registration_by_id(data.registration_id)
     if reg is None:
         raise HTTPException(status_code=404, detail="Registration not found")
-    existing = (
-        await db.execute(select(Certificate).where(Certificate.registration_id == reg.id))
-    ).scalar_one_or_none()
+    existing = await catalyst_db.get_certificate_by_registration(reg.id)
     if existing:
         raise HTTPException(status_code=400, detail="Certificate already issued for this registration")
     cert_id = _gen_cert_id()
-    cert = Certificate(
+    cert = await catalyst_db.create_certificate(
         cert_id=cert_id,
         registration_id=reg.id,
         user_id=reg.user_id,
@@ -51,62 +42,45 @@ async def issue_certificate(
         template=data.template,
         qr_data=f"/verify/{cert_id}",
     )
-    db.add(cert)
-    await db.commit()
-    await db.refresh(cert)
     return cert
 
 
 @router.post("/issue-manual", response_model=CertificateOut, status_code=status.HTTP_201_CREATED)
 async def issue_certificate_manual(
-    data: CertificateManualIssueIn, db: AsyncSession = Depends(get_db), user: User = Depends(require_staff)
+    data: CertificateManualIssueIn, user: User = Depends(require_staff)
 ):
     """Issue a certificate for a participant by name/email, creating the user
     and registration records if needed (admin convenience)."""
-    ws = (await db.execute(select(Workshop).where(Workshop.id == data.workshop_id))).scalar_one_or_none()
+    ws = await catalyst_db.get_workshop_by_id(data.workshop_id)
     if ws is None:
         raise HTTPException(status_code=404, detail="Workshop not found")
 
-    participant: User | None = None
+    participant = None
     if data.email:
-        participant = (
-            await db.execute(select(User).where(User.email == data.email.strip().lower()))
-        ).scalar_one_or_none()
+        participant = await catalyst_db.get_user_by_email(data.email.strip().lower())
     if participant is None:
-        participant = User(
+        participant = await catalyst_db.create_user(
             email=(data.email.strip().lower() if data.email else f"manual-{secrets.token_hex(4)}@placeholder.local"),
             name=data.name.strip(),
             password_hash="!",
             role="student",
         )
-        db.add(participant)
-        await db.flush()
 
-    reg = (
-        await db.execute(
-            select(Registration).where(
-                Registration.user_id == participant.id, Registration.workshop_id == ws.id
-            )
-        )
-    ).scalar_one_or_none()
+    reg = await catalyst_db.get_registration_by_user_workshop(participant.id, ws.id)
     if reg is None:
-        reg = Registration(
+        reg = await catalyst_db.create_registration(
             reg_id="WS-2026-" + "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6)),
             user_id=participant.id,
             workshop_id=ws.id,
             status="attended",
         )
-        db.add(reg)
-        await db.flush()
     else:
-        existing_cert = (
-            await db.execute(select(Certificate).where(Certificate.registration_id == reg.id))
-        ).scalar_one_or_none()
+        existing_cert = await catalyst_db.get_certificate_by_registration(reg.id)
         if existing_cert:
             raise HTTPException(status_code=400, detail="Certificate already issued for this registration")
 
     cert_id = _gen_cert_id()
-    cert = Certificate(
+    cert = await catalyst_db.create_certificate(
         cert_id=cert_id,
         registration_id=reg.id,
         user_id=participant.id,
@@ -114,19 +88,16 @@ async def issue_certificate_manual(
         template=data.template,
         qr_data=f"/verify/{cert_id}",
     )
-    db.add(cert)
-    await db.commit()
-    await db.refresh(cert)
     return cert
 
 
 @router.get("/verify/{cert_id}", response_model=CertificateVerifyOut)
-async def verify_certificate(cert_id: str, db: AsyncSession = Depends(get_db)):
-    cert = (await db.execute(select(Certificate).where(Certificate.cert_id == cert_id))).scalar_one_or_none()
+async def verify_certificate(cert_id: str):
+    cert = await catalyst_db.get_certificate_by_cert_id(cert_id)
     if cert is None:
         return CertificateVerifyOut(valid=False, cert_id=cert_id)
-    holder = (await db.execute(select(User).where(User.id == cert.user_id))).scalar_one_or_none()
-    ws = (await db.execute(select(Workshop).where(Workshop.id == cert.workshop_id))).scalar_one_or_none()
+    holder = await catalyst_db.get_user_by_id(cert.user_id)
+    ws = await catalyst_db.get_workshop_by_id(cert.workshop_id)
     return CertificateVerifyOut(
         valid=not cert.revoked,
         cert_id=cert.cert_id,
@@ -138,52 +109,36 @@ async def verify_certificate(cert_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{cert_id}/revoke", response_model=CertificateOut)
-async def revoke_certificate(cert_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(require_staff)):
-    cert = (await db.execute(select(Certificate).where(Certificate.cert_id == cert_id))).scalar_one_or_none()
+async def revoke_certificate(cert_id: str, user: User = Depends(require_staff)):
+    cert = await catalyst_db.get_certificate_by_cert_id(cert_id)
     if cert is None:
         raise HTTPException(status_code=404, detail="Certificate not found")
-    cert.revoked = True
-    await db.commit()
-    await db.refresh(cert)
-    return cert
+    return await catalyst_db.set_certificate_revoked(cert.id, True)
 
 
 @router.post("/{cert_id}/restore", response_model=CertificateOut)
-async def restore_certificate(cert_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(require_staff)):
-    cert = (await db.execute(select(Certificate).where(Certificate.cert_id == cert_id))).scalar_one_or_none()
+async def restore_certificate(cert_id: str, user: User = Depends(require_staff)):
+    cert = await catalyst_db.get_certificate_by_cert_id(cert_id)
     if cert is None:
         raise HTTPException(status_code=404, detail="Certificate not found")
-    cert.revoked = False
-    await db.commit()
-    await db.refresh(cert)
-    return cert
+    return await catalyst_db.set_certificate_revoked(cert.id, False)
 
 
 @router.get("/me", response_model=list[CertificateOut])
-async def my_certificates(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    rows = (
-        await db.execute(
-            select(Certificate).where(Certificate.user_id == user.id).order_by(Certificate.issued_at.desc())
-        )
-    ).scalars().all()
-    return rows
+async def my_certificates(user: User = Depends(get_current_user)):
+    return await catalyst_db.list_certificates_by_user(user.id)
 
 
 @router.get("", response_model=list[CertificateDetailOut])
-async def all_certificates(db: AsyncSession = Depends(get_db), user: User = Depends(require_staff)):
-    rows = (
-        await db.execute(
-            select(Certificate, User, Workshop)
-            .join(User, Certificate.user_id == User.id)
-            .join(Workshop, Certificate.workshop_id == Workshop.id)
-            .order_by(Certificate.issued_at.desc())
-        )
-    ).all()
+async def all_certificates(user: User = Depends(require_staff)):
+    rows = await catalyst_db.list_all_certificates()
     out: list[CertificateDetailOut] = []
-    for cert, u, w in rows:
+    for cert in rows:
         d = CertificateDetailOut.model_validate(cert)
-        d.holder_name = u.name
-        d.holder_email = u.email
-        d.workshop_title = w.title
+        u = await catalyst_db.get_user_by_id(cert.user_id)
+        w = await catalyst_db.get_workshop_by_id(cert.workshop_id)
+        d.holder_name = u.name if u else ""
+        d.holder_email = u.email if u else ""
+        d.workshop_title = w.title if w else ""
         out.append(d)
     return out

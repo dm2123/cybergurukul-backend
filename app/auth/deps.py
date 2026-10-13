@@ -1,12 +1,10 @@
 """Auth dependencies: current user resolution and RBAC role guards."""
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import catalyst_db
 from app.auth.security import decode_token
-from app.database import get_db
-from app.models.user import User
+from app.catalyst_db import User
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -15,14 +13,13 @@ ROLE_HIERARCHY = ["student", "instructor", "certificate_manager", "workshop_mana
 
 async def get_current_user(
     creds: HTTPAuthorizationCredentials | None = Depends(bearer),
-    db: AsyncSession = Depends(get_db),
 ) -> User:
     if creds is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     payload = decode_token(creds.credentials)
     if not payload or payload.get("type") != "access":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
-    user = (await db.execute(select(User).where(User.id == int(payload["sub"])))).scalar_one_or_none()
+    user = await catalyst_db.get_user_by_id(int(payload["sub"]))
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
     return user

@@ -1,14 +1,8 @@
 """Public user profile (non-sensitive participant info)."""
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
-from app.models.certificate import Certificate
-from app.models.registration import Registration
-from app.models.user import User
-from app.models.workshop import Workshop
+from app import catalyst_db
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
@@ -35,48 +29,42 @@ class PublicProfileOut(BaseModel):
 
 
 @router.get("/{user_id}/profile", response_model=PublicProfileOut)
-async def public_profile(user_id: int, db: AsyncSession = Depends(get_db)):
-    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+async def public_profile(user_id: int):
+    user = await catalyst_db.get_user_by_id(user_id)
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
 
-    reg_rows = (
-        await db.execute(
-            select(Registration, Workshop)
-            .join(Workshop, Registration.workshop_id == Workshop.id)
-            .where(Registration.user_id == user.id, Registration.status != "cancelled")
-            .order_by(Registration.registered_at.desc())
-        )
-    ).all()
+    reg_rows = await catalyst_db.list_registrations_by_user(user.id)
+    cert_rows = await catalyst_db.list_certificates_by_user(user.id)
 
-    cert_rows = (
-        await db.execute(
-            select(Certificate, Workshop)
-            .join(Workshop, Certificate.workshop_id == Workshop.id)
-            .where(Certificate.user_id == user.id, Certificate.revoked == False)  # noqa: E712
-            .order_by(Certificate.issued_at.desc())
-        )
-    ).all()
+    workshops = []
+    for r in reg_rows:
+        if r.status == "cancelled":
+            continue
+        w = await catalyst_db.get_workshop_by_id(r.workshop_id)
+        workshops.append(ProfileWorkshop(
+            title=w.title if w else "",
+            reg_id=r.reg_id,
+            status=r.status,
+            registered_at=(r.registered_at[:10] if r.registered_at else ""),
+        ))
 
+    certificates = []
+    for c in cert_rows:
+        if c.revoked:
+            continue
+        w = await catalyst_db.get_workshop_by_id(c.workshop_id)
+        certificates.append(ProfileCertificate(
+            cert_id=c.cert_id,
+            workshop=w.title if w else "",
+            issued_at=(c.issued_at[:10] if c.issued_at else ""),
+        ))
+
+    member_since = user.created_at[:10] if user.created_at else ""
     return PublicProfileOut(
         id=user.id,
         name=user.name,
-        member_since=user.created_at.date().isoformat() if user.created_at else "",
-        workshops=[
-            ProfileWorkshop(
-                title=w.title,
-                reg_id=r.reg_id,
-                status=r.status,
-                registered_at=r.registered_at.date().isoformat() if r.registered_at else "",
-            )
-            for r, w in reg_rows
-        ],
-        certificates=[
-            ProfileCertificate(
-                cert_id=c.cert_id,
-                workshop=w.title,
-                issued_at=c.issued_at.date().isoformat() if c.issued_at else "",
-            )
-            for c, w in cert_rows
-        ],
+        member_since=member_since,
+        workshops=workshops,
+        certificates=certificates,
     )

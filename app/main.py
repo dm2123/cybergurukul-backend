@@ -1,28 +1,18 @@
-"""CyberGurukul enterprise backend — FastAPI application entrypoint."""
-from contextlib import asynccontextmanager
+"""CyberGurukul enterprise backend — FastAPI application entrypoint.
 
+100% Zoho: data lives in Catalyst Data Store (tables created in the
+Project-Rainfall console). No SQLAlchemy, no external database.
+"""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app import models  # noqa: F401 — register models for Base.metadata
 from app.config import settings
 from app.routers import auth, certificates, registrations, stats, users, workshops
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Tables are created via Alembic migrations in production.
-    # Uncomment for quick local bootstrap:
-    # from app.database import init_db
-    # await init_db()
-    yield
-
 
 app = FastAPI(
     title="CyberGurukul API",
     description="Workshop & Digital Certificate Management Platform — core backend",
-    version="0.1.0",
-    lifespan=lifespan,
+    version="0.2.0",
 )
 
 app.add_middleware(

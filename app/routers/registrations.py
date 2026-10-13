@@ -3,14 +3,10 @@ import secrets
 import string
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import catalyst_db
 from app.auth.deps import get_current_user, require_staff
-from app.database import get_db
-from app.models.registration import Registration
-from app.models.user import User
-from app.models.workshop import Workshop
+from app.catalyst_db import Registration, User
 from app.schemas.registration import (
     RegistrationDetailOut,
     RegistrationOut,
@@ -27,80 +23,59 @@ def _gen_reg_id() -> str:
 
 @router.post("/{workshop_slug}", response_model=RegistrationOut, status_code=status.HTTP_201_CREATED)
 async def register(
-    workshop_slug: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
+    workshop_slug: str, user: User = Depends(get_current_user)
 ):
-    w = (await db.execute(select(Workshop).where(Workshop.slug == workshop_slug))).scalar_one_or_none()
+    w = await catalyst_db.get_workshop_by_slug(workshop_slug)
     if w is None:
         raise HTTPException(status_code=404, detail="Workshop not found")
     if w.status == "completed":
         raise HTTPException(status_code=400, detail="Workshop already completed")
-    existing = (
-        await db.execute(
-            select(Registration).where(
-                Registration.user_id == user.id, Registration.workshop_id == w.id
-            )
-        )
-    ).scalar_one_or_none()
+    existing = await catalyst_db.get_registration_by_user_workshop(user.id, w.id)
     if existing:
         raise HTTPException(status_code=400, detail="Already registered for this workshop")
-    reg = Registration(reg_id=_gen_reg_id(), user_id=user.id, workshop_id=w.id)
-    db.add(reg)
-    await db.commit()
-    await db.refresh(reg)
+    reg = await catalyst_db.create_registration(
+        reg_id=_gen_reg_id(), user_id=user.id, workshop_id=w.id
+    )
     return reg
 
 
 @router.get("/me", response_model=list[RegistrationOut])
-async def my_registrations(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    rows = (
-        await db.execute(
-            select(Registration).where(Registration.user_id == user.id).order_by(Registration.registered_at.desc())
-        )
-    ).scalars().all()
-    return rows
+async def my_registrations(user: User = Depends(get_current_user)):
+    return await catalyst_db.list_registrations_by_user(user.id)
 
 
 @router.get("", response_model=list[RegistrationDetailOut])
-async def all_registrations(db: AsyncSession = Depends(get_db), user: User = Depends(require_staff)):
-    rows = (
-        await db.execute(
-            select(Registration, User, Workshop)
-            .join(User, Registration.user_id == User.id)
-            .join(Workshop, Registration.workshop_id == Workshop.id)
-            .order_by(Registration.registered_at.desc())
-        )
-    ).all()
+async def all_registrations(user: User = Depends(require_staff)):
+    rows = await catalyst_db.list_all_registrations()
     out: list[RegistrationDetailOut] = []
-    for reg, u, w in rows:
+    for reg in rows:
         d = RegistrationDetailOut.model_validate(reg)
-        d.user_name = u.name
-        d.user_email = u.email
-        d.workshop_title = w.title
+        u = await catalyst_db.get_user_by_id(reg.user_id)
+        w = await catalyst_db.get_workshop_by_id(reg.workshop_id)
+        d.user_name = u.name if u else ""
+        d.user_email = u.email if u else ""
+        d.workshop_title = w.title if w else ""
         out.append(d)
     return out
 
 
 @router.patch("/{reg_id}", response_model=RegistrationOut)
 async def update_registration_status(
-    reg_id: int, data: RegistrationStatusIn, db: AsyncSession = Depends(get_db), user: User = Depends(require_staff)
+    reg_id: int, data: RegistrationStatusIn, user: User = Depends(require_staff)
 ):
     if data.status not in ("registered", "attended", "cancelled"):
         raise HTTPException(status_code=400, detail="Invalid status")
-    reg = (await db.execute(select(Registration).where(Registration.id == reg_id))).scalar_one_or_none()
+    reg = await catalyst_db.get_registration_by_id(reg_id)
     if reg is None:
         raise HTTPException(status_code=404, detail="Registration not found")
-    reg.status = data.status
-    await db.commit()
-    await db.refresh(reg)
-    return reg
+    return await catalyst_db.update_registration_status(reg_id, data.status)
 
 
 @router.delete("/{reg_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_registration(
-    reg_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(require_staff)
+    reg_id: int, user: User = Depends(require_staff)
 ):
-    reg = (await db.execute(select(Registration).where(Registration.id == reg_id))).scalar_one_or_none()
+    reg = await catalyst_db.get_registration_by_id(reg_id)
     if reg is None:
         raise HTTPException(status_code=404, detail="Registration not found")
-    await db.delete(reg)
-    await db.commit()
+    await catalyst_db.delete_registration(reg_id)
