@@ -204,8 +204,8 @@ def _workshop_from_row(r: dict) -> Workshop:
         slug=r.get("Slug", ""),
         description=r.get("Description"),
         category=r.get("Category", "Cybersecurity") or "Cybersecurity",
-        date=r.get("Date", "") or "",
-        time=r.get("Time", "") or "",
+        date=r.get("WorkshopDate", "") or "",
+        time=r.get("WorkshopTime", "") or "",
         duration=r.get("Duration", "") or "",
         mode=r.get("Mode", "Online") or "Online",
         price=_to_int(r.get("Price")),
@@ -297,7 +297,7 @@ async def get_workshop_by_id(workshop_id: int) -> Optional[Workshop]:
 async def create_workshop(data: dict) -> Workshop:
     col_map = {
         "title": "Title", "slug": "Slug", "description": "Description",
-        "category": "Category", "date": "Date", "time": "Time",
+        "category": "Category", "date": "WorkshopDate", "time": "WorkshopTime",
         "duration": "Duration", "mode": "Mode", "price": "Price",
         "instructor": "Instructor", "syllabus": "Syllabus",
         "max_seats": "MaxSeats", "status": "Status",
@@ -310,7 +310,7 @@ async def create_workshop(data: dict) -> Workshop:
 async def update_workshop(workshop_id: int, data: dict) -> Optional[Workshop]:
     col_map = {
         "title": "Title", "slug": "Slug", "description": "Description",
-        "category": "Category", "date": "Date", "time": "Time",
+        "category": "Category", "date": "WorkshopDate", "time": "WorkshopTime",
         "duration": "Duration", "mode": "Mode", "price": "Price",
         "instructor": "Instructor", "syllabus": "Syllabus",
         "max_seats": "MaxSeats", "status": "Status",
